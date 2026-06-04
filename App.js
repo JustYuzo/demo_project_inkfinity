@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -11,11 +11,15 @@ import {
   Alert,
 } from "react-native";
 
+import AsyncStorage from "@react-native-async-storage/async-storage";
+
 import { useFonts } from "expo-font";
 import {
   CrimsonText_400Regular,
   CrimsonText_700Bold,
 } from "@expo-google-fonts/crimson-text";
+
+const STORAGE_KEY = "INKFINITY_RIWAYAT_PESANAN";
 
 export default function App() {
   const [screen, setScreen] = useState("home");
@@ -30,6 +34,40 @@ export default function App() {
     CrimsonText_400Regular,
     CrimsonText_700Bold,
   });
+
+  useEffect(() => {
+    ambilRiwayatPesanan();
+  }, []);
+
+  const ambilRiwayatPesanan = async () => {
+    try {
+      const data = await AsyncStorage.getItem(STORAGE_KEY);
+
+      if (data !== null) {
+        setRiwayatPesanan(JSON.parse(data));
+      }
+    } catch (error) {
+      console.log("Gagal mengambil riwayat pesanan:", error);
+    }
+  };
+
+  const simpanRiwayatPesanan = async (dataBaru) => {
+    try {
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(dataBaru));
+    } catch (error) {
+      console.log("Gagal menyimpan riwayat pesanan:", error);
+    }
+  };
+
+  const hapusRiwayatPesanan = async () => {
+    try {
+      await AsyncStorage.removeItem(STORAGE_KEY);
+      setRiwayatPesanan([]);
+      Alert.alert("Berhasil", "Riwayat pesanan berhasil dihapus.");
+    } catch (error) {
+      console.log("Gagal menghapus riwayat pesanan:", error);
+    }
+  };
 
   if (!fontsLoaded) {
     return null;
@@ -83,9 +121,14 @@ export default function App() {
   const selectedData =
     layanan.find((item) => item.nama === selectedService) || layanan[0];
 
-  const buatPesanan = () => {
+  const buatPesanan = async () => {
     if (nama.trim() === "" || jumlah.trim() === "") {
       Alert.alert("Peringatan", "Nama dan jumlah harus diisi.");
+      return;
+    }
+
+    if (isNaN(Number(jumlah)) || Number(jumlah) <= 0) {
+      Alert.alert("Peringatan", "Jumlah harus berupa angka yang valid.");
       return;
     }
 
@@ -99,10 +142,14 @@ export default function App() {
       total,
       catatan,
       status: "Menunggu Diproses",
+      tanggal: new Date().toLocaleDateString("id-ID"),
     };
 
+    const riwayatBaru = [dataPesanan, ...riwayatPesanan];
+
     setPesanan(dataPesanan);
-    setRiwayatPesanan([dataPesanan, ...riwayatPesanan]);
+    setRiwayatPesanan(riwayatBaru);
+    await simpanRiwayatPesanan(riwayatBaru);
 
     setNama("");
     setJumlah("");
@@ -255,6 +302,11 @@ export default function App() {
             </View>
 
             <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>Tanggal</Text>
+              <Text style={styles.detailValue}>{pesanan.tanggal}</Text>
+            </View>
+
+            <View style={styles.detailRow}>
               <Text style={styles.detailLabel}>Status</Text>
               <Text style={styles.statusText}>{pesanan.status}</Text>
             </View>
@@ -290,7 +342,7 @@ export default function App() {
           <Text style={styles.orderTitle}>Riwayat Pemesanan</Text>
 
           <Text style={styles.orderSubtitle}>
-            Daftar pesanan yang sudah dibuat oleh pengguna.
+            Daftar pesanan yang sudah tersimpan di database lokal.
           </Text>
 
           {riwayatPesanan.length === 0 ? (
@@ -313,6 +365,9 @@ export default function App() {
                 <Text style={styles.historyText}>Nama: {item.nama}</Text>
                 <Text style={styles.historyText}>Layanan: {item.layanan}</Text>
                 <Text style={styles.historyText}>Jumlah: {item.jumlah}</Text>
+                <Text style={styles.historyText}>
+                  Tanggal: {item.tanggal || "-"}
+                </Text>
                 <Text style={styles.historyTotal}>
                   Total: Rp{item.total.toLocaleString("id-ID")}
                 </Text>
@@ -326,6 +381,15 @@ export default function App() {
           >
             <Text style={styles.primaryButtonText}>Buat Pesanan Baru</Text>
           </TouchableOpacity>
+
+          {riwayatPesanan.length > 0 && (
+            <TouchableOpacity
+              style={styles.dangerButton}
+              onPress={hapusRiwayatPesanan}
+            >
+              <Text style={styles.dangerButtonText}>Hapus Riwayat</Text>
+            </TouchableOpacity>
+          )}
 
           <TouchableOpacity
             style={styles.backButton}
@@ -791,5 +855,20 @@ const styles = StyleSheet.create({
     fontSize: 17,
     color: "#3B3B3B",
     marginTop: 5,
+  },
+
+  dangerButton: {
+    backgroundColor: "#b91c1c",
+    paddingVertical: 14,
+    borderRadius: 16,
+    alignItems: "center",
+    marginTop: 2,
+    width: "100%",
+  },
+
+  dangerButtonText: {
+    fontFamily: "CrimsonText_700Bold",
+    color: "#FFFFFF",
+    fontSize: 17,
   },
 });
