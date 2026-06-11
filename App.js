@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { supabase } from "./supabase";
 import {
   View,
   Text,
@@ -9,9 +10,13 @@ import {
   ScrollView,
   TextInput,
   Alert,
+  Linking,
 } from "react-native";
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as DocumentPicker from "expo-document-picker";
+import * as FileSystem from "expo-file-system/legacy";
+import { decode } from "base64-arraybuffer";
 
 import { useFonts } from "expo-font";
 import {
@@ -20,12 +25,29 @@ import {
 } from "@expo-google-fonts/crimson-text";
 
 const STORAGE_KEY = "INKFINITY_RIWAYAT_PESANAN";
+const USERS_KEY = "INKFINITY_USERS";
+
+const ADMIN_USERNAME = "admin";
+const ADMIN_PASSWORD = "inkfinity123";
 
 export default function App() {
-  const [screen, setScreen] = useState("home");
+  const [screen, setScreen] = useState("login");
+
+  const [loginUsername, setLoginUsername] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+
+  const [signupNama, setSignupNama] = useState("");
+  const [signupUsername, setSignupUsername] = useState("");
+  const [signupPassword, setSignupPassword] = useState("");
+
+  const [currentUser, setCurrentUser] = useState(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+
   const [selectedService, setSelectedService] = useState("Print Hitam Putih");
   const [nama, setNama] = useState("");
   const [jumlah, setJumlah] = useState("");
+  const [namaFile, setNamaFile] = useState("");
+  const [selectedFile, setSelectedFile] = useState(null);
   const [catatan, setCatatan] = useState("");
   const [pesanan, setPesanan] = useState(null);
   const [riwayatPesanan, setRiwayatPesanan] = useState([]);
@@ -34,44 +56,6 @@ export default function App() {
     CrimsonText_400Regular,
     CrimsonText_700Bold,
   });
-
-  useEffect(() => {
-    ambilRiwayatPesanan();
-  }, []);
-
-  const ambilRiwayatPesanan = async () => {
-    try {
-      const data = await AsyncStorage.getItem(STORAGE_KEY);
-
-      if (data !== null) {
-        setRiwayatPesanan(JSON.parse(data));
-      }
-    } catch (error) {
-      console.log("Gagal mengambil riwayat pesanan:", error);
-    }
-  };
-
-  const simpanRiwayatPesanan = async (dataBaru) => {
-    try {
-      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(dataBaru));
-    } catch (error) {
-      console.log("Gagal menyimpan riwayat pesanan:", error);
-    }
-  };
-
-  const hapusRiwayatPesanan = async () => {
-    try {
-      await AsyncStorage.removeItem(STORAGE_KEY);
-      setRiwayatPesanan([]);
-      Alert.alert("Berhasil", "Riwayat pesanan berhasil dihapus.");
-    } catch (error) {
-      console.log("Gagal menghapus riwayat pesanan:", error);
-    }
-  };
-
-  if (!fontsLoaded) {
-    return null;
-  }
 
   const layanan = [
     {
@@ -121,9 +105,320 @@ export default function App() {
   const selectedData =
     layanan.find((item) => item.nama === selectedService) || layanan[0];
 
+  const jumlahAngka = Number(jumlah);
+  const estimasiTotal =
+    !isNaN(jumlahAngka) && jumlahAngka > 0
+      ? selectedData.harga * jumlahAngka
+      : 0;
+
+
+  const ambilRiwayatPesanan = async () => {
+    try {
+      const data = await AsyncStorage.getItem(STORAGE_KEY);
+      if (data !== null) {
+        setRiwayatPesanan(JSON.parse(data));
+      }
+    } catch (error) {
+      console.log("Gagal mengambil riwayat pesanan:", error);
+    }
+  };
+
+  const simpanRiwayatPesanan = async (dataBaru) => {
+    try {
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(dataBaru));
+    } catch (error) {
+      console.log("Gagal menyimpan riwayat pesanan:", error);
+    }
+  };
+
+  const ambilUsers = async () => {
+    try {
+      const data = await AsyncStorage.getItem(USERS_KEY);
+      return data ? JSON.parse(data) : [];
+    } catch (error) {
+      console.log("Gagal mengambil data user:", error);
+      return [];
+    }
+  };
+
+  const simpanUsers = async (dataUsers) => {
+    try {
+      await AsyncStorage.setItem(USERS_KEY, JSON.stringify(dataUsers));
+    } catch (error) {
+      console.log("Gagal menyimpan data user:", error);
+    }
+  };
+
+  const handleSignup = async () => {
+    if (
+      signupNama.trim() === "" ||
+      signupUsername.trim() === "" ||
+      signupPassword.trim() === ""
+    ) {
+      Alert.alert("Peringatan", "Nama, username, dan password wajib diisi.");
+      return;
+    }
+
+    if (signupUsername.trim().toLowerCase() === ADMIN_USERNAME) {
+      Alert.alert("Peringatan", "Username admin tidak dapat digunakan.");
+      return;
+    }
+
+    const users = await ambilUsers();
+
+    const usernameSudahAda = users.some(
+      (user) => user.username.toLowerCase() === signupUsername.trim().toLowerCase()
+    );
+
+    if (usernameSudahAda) {
+      Alert.alert("Peringatan", "Username sudah terdaftar.");
+      return;
+    }
+
+    const userBaru = {
+      id: Date.now(),
+      nama: signupNama.trim(),
+      username: signupUsername.trim(),
+      password: signupPassword,
+    };
+
+    await simpanUsers([...users, userBaru]);
+
+    setSignupNama("");
+    setSignupUsername("");
+    setSignupPassword("");
+
+    Alert.alert("Berhasil", "Akun berhasil dibuat. Silakan login.");
+    setScreen("login");
+  };
+
+  const handleLogin = async () => {
+    if (loginUsername.trim() === "" || loginPassword.trim() === "") {
+      Alert.alert("Peringatan", "Username dan password wajib diisi.");
+      return;
+    }
+
+    if (
+      loginUsername.trim().toLowerCase() === ADMIN_USERNAME &&
+      loginPassword === ADMIN_PASSWORD
+    ) {
+      setCurrentUser({
+        id: "admin",
+        nama: "Admin Inkfinity",
+        username: ADMIN_USERNAME,
+      });
+      setIsAdmin(true);
+      setLoginUsername("");
+      setLoginPassword("");
+      setScreen("admin");
+      return;
+    }
+
+    const users = await ambilUsers();
+
+    const userDitemukan = users.find(
+      (user) =>
+        user.username.toLowerCase() === loginUsername.trim().toLowerCase() &&
+        user.password === loginPassword
+    );
+
+    if (!userDitemukan) {
+      Alert.alert("Login Gagal", "Username atau password salah.");
+      return;
+    }
+
+    setCurrentUser(userDitemukan);
+    setIsAdmin(false);
+    setNama(userDitemukan.nama);
+    setLoginUsername("");
+    setLoginPassword("");
+    setScreen("home");
+  };
+
+  const logout = () => {
+    setCurrentUser(null);
+    setIsAdmin(false);
+    setScreen("login");
+    setNama("");
+    setJumlah("");
+    setNamaFile("");
+    setCatatan("");
+    setPesanan(null);
+  };
+
+const pilihFile = async () => {
+  try {
+    const result = await DocumentPicker.getDocumentAsync({
+      type: [
+        "application/pdf",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "image/*",
+      ],
+      copyToCacheDirectory: true,
+    });
+
+
+    if (!result.canceled) {
+      const file = result.assets[0];
+
+      setSelectedFile(file);
+      setNamaFile(file.name);
+
+      Alert.alert("File Dipilih", file.name);
+    }
+  } catch (error) {
+    Alert.alert("Error", "Gagal memilih file.");
+    console.log("Gagal memilih file:", error);
+  }
+};
+
+const getMimeType = (fileName, fallbackMimeType) => {
+  if (fallbackMimeType) return fallbackMimeType;
+
+  const ext = fileName.split(".").pop()?.toLowerCase();
+
+  if (ext === "pdf") return "application/pdf";
+  if (ext === "doc") return "application/msword";
+  if (ext === "docx") {
+    return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  }
+  if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+  if (ext === "png") return "image/png";
+
+  return "application/octet-stream";
+};
+
+const uploadFile = async () => {
+  if (!selectedFile) {
+    throw new Error("File belum dipilih.");
+  }
+
+  const maxSize = 10 * 1024 * 1024;
+
+  if (selectedFile.size && selectedFile.size > maxSize) {
+    throw new Error("Ukuran file maksimal 10 MB.");
+  }
+
+  const safeFileName = selectedFile.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const filePath = `orders/${Date.now()}_${safeFileName}`;
+  const contentType = getMimeType(selectedFile.name, selectedFile.mimeType);
+
+  let arrayBuffer;
+
+  if (selectedFile.uri?.startsWith("data:")) {
+    const base64Data = selectedFile.uri.split(",")[1];
+    arrayBuffer = decode(base64Data);
+  } else if (selectedFile.uri?.startsWith("file:")) {
+    const base64Data = await FileSystem.readAsStringAsync(selectedFile.uri, {
+      encoding: "base64",
+    });
+    arrayBuffer = decode(base64Data);
+  } else {
+    const response = await fetch(selectedFile.uri);
+    arrayBuffer = await response.arrayBuffer();
+  }
+
+  const { error: uploadError } = await supabase.storage
+    .from("order-files")
+    .upload(filePath, arrayBuffer, {
+      contentType,
+      upsert: false,
+    });
+
+  if (uploadError) {
+    throw uploadError;
+  }
+
+  const { data } = supabase.storage
+    .from("order-files")
+    .getPublicUrl(filePath);
+
+  return {
+    fileName: selectedFile.name,
+    filePath,
+    fileUrl: data.publicUrl,
+  };
+};
+
+const formatOrderData = (data) => {
+  return {
+    id: data.id,
+    userId: data.user_id,
+    username: data.user_name,
+    nama: data.user_name,
+    name: data.user_name,
+    layanan: data.service_name,
+    jumlah: String(data.quantity),
+    namaFile: data.file_name,
+    fileUrl: data.file_url,
+    filePath: data.file_path,
+    total: data.total,
+    catatan: data.notes || "",
+    status: data.status,
+    tanggal: new Date(data.created_at).toLocaleDateString("id-ID"),
+    waktu: new Date(data.created_at).toLocaleTimeString("id-ID", {
+      hour: "2-digit",
+      minute: "2-digit",
+    }),
+  };
+};
+
+const ambilPesananOnline = async () => {
+  try {
+    const { data, error } = await supabase
+      .from("orders")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      throw error;
+    }
+
+    const hasilFormat = (data || []).map((item) => formatOrderData(item));
+    setRiwayatPesanan(hasilFormat);
+  } catch (error) {
+    console.log("Gagal mengambil pesanan online:", error?.message || error);
+  }
+};
+
+useEffect(() => {
+  ambilPesananOnline();
+
+  const channel = supabase
+    .channel("orders-realtime")
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "orders",
+      },
+      () => {
+        ambilPesananOnline();
+      }
+    )
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}, []);
+
   const buatPesanan = async () => {
+    if (!currentUser) {
+      Alert.alert("Peringatan", "Silakan login terlebih dahulu.");
+      setScreen("login");
+      return;
+    }
+
     if (nama.trim() === "" || jumlah.trim() === "") {
       Alert.alert("Peringatan", "Nama dan jumlah harus diisi.");
+      return;
+    }
+
+    if (!selectedFile) {
+      Alert.alert("Peringatan", "Silakan pilih file dokumen terlebih dahulu.");
       return;
     }
 
@@ -134,29 +429,328 @@ export default function App() {
 
     const total = selectedData.harga * Number(jumlah);
 
-    const dataPesanan = {
-      id: Date.now(),
-      nama,
-      layanan: selectedData.nama,
-      jumlah,
-      total,
-      catatan,
-      status: "Menunggu Diproses",
-      tanggal: new Date().toLocaleDateString("id-ID"),
-    };
+    try {
+      Alert.alert("Info", "Pesanan sedang dikirim, mohon tunggu...");
 
-    const riwayatBaru = [dataPesanan, ...riwayatPesanan];
+      const uploadedFile = await uploadFile();
 
-    setPesanan(dataPesanan);
-    setRiwayatPesanan(riwayatBaru);
-    await simpanRiwayatPesanan(riwayatBaru);
+      const orderData = {
+        user_id: String(currentUser.id || currentUser.username),
+        user_name: nama.trim(),
+        service_name: selectedData.nama,
+        service_price: selectedData.harga,
+        quantity: Number(jumlah),
+        total,
+        file_name: uploadedFile.fileName,
+        file_url: uploadedFile.fileUrl,
+        file_path: uploadedFile.filePath,
+        notes: catatan.trim(),
+        status: "Menunggu Diproses",
+      };
 
-    setNama("");
-    setJumlah("");
-    setCatatan("");
+      const { data, error } = await supabase
+        .from("orders")
+        .insert([orderData])
+        .select()
+        .single();
 
-    setScreen("detail");
+      if (error) {
+        throw error;
+      }
+
+      const dataPesanan = {
+        ...formatOrderData(data),
+        username: currentUser.username,
+      };
+
+      setPesanan(dataPesanan);
+      setRiwayatPesanan((prev) => [dataPesanan, ...prev]);
+
+      setJumlah("");
+      setNamaFile("");
+      setSelectedFile(null);
+      setCatatan("");
+
+      Alert.alert("Berhasil", "Pesanan berhasil dikirim secara online.");
+      setScreen("detail");
+    } catch (error) {
+      console.log("Gagal mengirim pesanan:", error?.message || error);
+      Alert.alert(
+        "Error",
+        error?.message || "Gagal mengirim pesanan. Cek koneksi internet atau file."
+      );
+    }
   };
+
+const updateStatusPesanan = async (id, statusBaru) => {
+  try { 
+    const { data, error } = await supabase
+      .from("orders")
+      .update({
+        status: statusBaru,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (error) {
+      throw error;
+    }
+
+    const dataBaru = riwayatPesanan.map((item) =>
+      item.id === id ? { ...item, status: data.status } : item
+    );
+
+    setRiwayatPesanan(dataBaru);
+
+    if (pesanan && pesanan.id === id) {
+      setPesanan({
+        ...pesanan,
+        status: data.status,
+      });
+    }
+
+    Alert.alert("Berhasil", `Status pesanan diubah menjadi ${statusBaru}.`);
+  } catch (error) {
+    console.log("Gagal update status:", error);
+    Alert.alert("Error", "Gagal mengubah status pesanan.");
+  }
+};
+
+  const hapusSatuPesanan = async (id) => {
+    const dataBaru = riwayatPesanan.filter((item) => item.id !== id);
+    setRiwayatPesanan(dataBaru);
+    await simpanRiwayatPesanan(dataBaru);
+    Alert.alert("Berhasil", "Pesanan berhasil dihapus.");
+  };
+
+  const hapusRiwayatUser = async () => {
+    if (!currentUser) return;
+
+    const dataBaru = riwayatPesanan.filter(
+      (item) => item.userId !== currentUser.id
+    );
+
+    setRiwayatPesanan(dataBaru);
+    await simpanRiwayatPesanan(dataBaru);
+    Alert.alert("Berhasil", "Riwayat pesanan kamu berhasil dihapus.");
+  };
+
+const riwayatUser = currentUser
+  ? riwayatPesanan.filter(
+      (item) => String(item.userId) === String(currentUser.id || currentUser.username)
+    )
+  : [];
+
+  const getStatusStyle = (status) => {
+    if (status === "Selesai") return styles.statusSelesai;
+    if (status === "Sedang Diproses") return styles.statusProses;
+    if (status === "Dibatalkan") return styles.statusBatal;
+    return styles.statusMenunggu;
+  };
+
+  if (!fontsLoaded) {
+    return null;
+  }
+
+  if (screen === "login") {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <ScrollView contentContainerStyle={styles.authContainer}>
+          <Text style={styles.title}>INKFINITY</Text>
+
+          <View style={styles.authCard}>
+            <Text style={styles.authTitle}>Login</Text>
+            <Text style={styles.authSubtitle}>
+              Masuk sebagai user atau admin untuk mengakses aplikasi.
+            </Text>
+
+            <Text style={styles.label}>Username</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Masukkan username"
+              placeholderTextColor="#8a7a68"
+              value={loginUsername}
+              onChangeText={setLoginUsername}
+              autoCapitalize="none"
+            />
+
+            <Text style={styles.label}>Password</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Masukkan password"
+              placeholderTextColor="#8a7a68"
+              value={loginPassword}
+              onChangeText={setLoginPassword}
+              secureTextEntry
+            />
+
+            <TouchableOpacity style={styles.submitButton} onPress={handleLogin}>
+              <Text style={styles.submitButtonText}>Login</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.secondaryButton}
+              onPress={() => setScreen("signup")}
+            >
+              <Text style={styles.secondaryButtonText}>Buat Akun User</Text>
+            </TouchableOpacity>
+
+          </View>
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
+  if (screen === "signup") {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <ScrollView contentContainerStyle={styles.authContainer}>
+          <Text style={styles.title}>INKFINITY</Text>
+
+          <View style={styles.authCard}>
+            <Text style={styles.authTitle}>Sign Up User</Text>
+            <Text style={styles.authSubtitle}>
+              Buat akun pengguna untuk melakukan pemesanan layanan.
+            </Text>
+
+            <Text style={styles.label}>Nama Lengkap</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Masukkan nama lengkap"
+              placeholderTextColor="#8a7a68"
+              value={signupNama}
+              onChangeText={setSignupNama}
+            />
+
+            <Text style={styles.label}>Username</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Masukkan username"
+              placeholderTextColor="#8a7a68"
+              value={signupUsername}
+              onChangeText={setSignupUsername}
+              autoCapitalize="none"
+            />
+
+            <Text style={styles.label}>Password</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Masukkan password"
+              placeholderTextColor="#8a7a68"
+              value={signupPassword}
+              onChangeText={setSignupPassword}
+              secureTextEntry
+            />
+
+            <TouchableOpacity style={styles.submitButton} onPress={handleSignup}>
+              <Text style={styles.submitButtonText}>Daftar</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.backButton}
+              onPress={() => setScreen("login")}
+            >
+              <Text style={styles.backButtonText}>Kembali ke Login</Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
+  if (screen === "admin" && isAdmin) {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <ScrollView contentContainerStyle={styles.orderContainer}>
+          <Text style={styles.orderTitle}>Admin Dashboard</Text>
+
+          <Text style={styles.orderSubtitle}>
+            Kelola semua pesanan dan ubah status pengerjaan.
+          </Text>
+
+          <View style={styles.adminSummary}>
+            <Text style={styles.adminSummaryText}>
+              Total Pesanan: {riwayatPesanan.length}
+            </Text>
+          </View>
+
+          {riwayatPesanan.length === 0 ? (
+            <View style={styles.emptyCard}>
+              <Text style={styles.emptyTitle}>Belum Ada Pesanan</Text>
+              <Text style={styles.emptyText}>
+                Pesanan user akan tampil di halaman admin setelah dibuat.
+              </Text>
+            </View>
+          ) : (
+            riwayatPesanan.map((item, index) => (
+              <View key={item.id} style={styles.historyCard}>
+                <View style={styles.historyHeader}>
+                  <Text style={styles.historyTitle}>
+                    Pesanan #{riwayatPesanan.length - index}
+                  </Text>
+                  <Text style={[styles.historyStatus, getStatusStyle(item.status)]}>
+                    {item.status}
+                  </Text>
+                </View>
+
+                <Text style={styles.historyText}>User: {item.username}</Text>
+                <Text style={styles.historyText}>Nama: {item.nama}</Text>
+                <Text style={styles.historyText}>Layanan: {item.layanan}</Text>
+                <Text style={styles.historyText}>Jumlah: {item.jumlah}</Text>
+                <Text style={styles.historyText}>File: {item.namaFile || "-"}</Text>
+                {item.fileUrl ? (
+                  <TouchableOpacity
+                    style={styles.fileOpenButton}
+                    onPress={() => Linking.openURL(item.fileUrl)}
+                  >
+                    <Text style={styles.fileOpenButtonText}>Buka File</Text>
+                  </TouchableOpacity>
+                ) : null}
+                <Text style={styles.historyText}>
+                  Tanggal: {item.tanggal} • {item.waktu}
+                </Text>
+                <Text style={styles.historyText}>
+                  Catatan: {item.catatan || "-"}
+                </Text>
+                <Text style={styles.historyTotal}>
+                  Total: Rp{item.total.toLocaleString("id-ID")}
+                </Text>
+
+                <View style={styles.adminButtonRow}>
+                  <TouchableOpacity
+                    style={styles.smallProcessButton}
+                    onPress={() => updateStatusPesanan(item.id, "Sedang Diproses")}
+                  >
+                    <Text style={styles.smallButtonText}>Proses</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.smallDoneButton}
+                    onPress={() => updateStatusPesanan(item.id, "Selesai")}
+                  >
+                    <Text style={styles.smallButtonText}>Selesai</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.smallCancelButton}
+                    onPress={() => updateStatusPesanan(item.id, "Dibatalkan")}
+                  >
+                    <Text style={styles.smallButtonText}>Batalkan</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ))
+          )}
+
+          <TouchableOpacity style={styles.dangerButton} onPress={logout}>
+            <Text style={styles.dangerButtonText}>Logout Admin</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
 
   if (screen === "layanan") {
     return (
@@ -244,6 +838,32 @@ export default function App() {
               keyboardType="numeric"
             />
 
+<Text style={styles.label}>File Dokumen</Text>
+
+<View style={styles.filePickerBox}>
+  <View style={styles.fileInfo}>
+    <Text style={styles.fileTitle}>
+      {namaFile ? namaFile : "Belum ada file dipilih"}
+    </Text>
+    <Text style={styles.fileSubtitle}>PDF, DOC, DOCX, JPG, PNG</Text>
+  </View>
+
+  <TouchableOpacity style={styles.fileButton} onPress={pilihFile}>
+    <Text style={styles.fileButtonText}>
+      {namaFile ? "Ganti File" : "Pilih File"}
+    </Text>
+  </TouchableOpacity>
+</View>
+
+            
+
+            <View style={styles.estimateBox}>
+              <Text style={styles.estimateLabel}>Estimasi Total</Text>
+              <Text style={styles.estimateValue}>
+                Rp{estimasiTotal.toLocaleString("id-ID")}
+              </Text>
+            </View>
+
             <Text style={styles.label}>Catatan Pesanan</Text>
             <TextInput
               style={[styles.input, styles.textArea]}
@@ -295,6 +915,11 @@ export default function App() {
             </View>
 
             <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>File</Text>
+              <Text style={styles.detailValue}>{pesanan.namaFile || "-"}</Text>
+            </View>
+
+            <View style={styles.detailRow}>
               <Text style={styles.detailLabel}>Total</Text>
               <Text style={styles.detailValue}>
                 Rp{pesanan.total.toLocaleString("id-ID")}
@@ -308,7 +933,9 @@ export default function App() {
 
             <View style={styles.detailRow}>
               <Text style={styles.detailLabel}>Status</Text>
-              <Text style={styles.statusText}>{pesanan.status}</Text>
+              <Text style={[styles.statusText, getStatusStyle(pesanan.status)]}>
+                {pesanan.status}
+              </Text>
             </View>
 
             <View style={styles.noteBox}>
@@ -342,10 +969,10 @@ export default function App() {
           <Text style={styles.orderTitle}>Riwayat Pemesanan</Text>
 
           <Text style={styles.orderSubtitle}>
-            Daftar pesanan yang sudah tersimpan di database lokal.
+            Daftar pesanan kamu beserta status pengerjaannya.
           </Text>
 
-          {riwayatPesanan.length === 0 ? (
+          {riwayatUser.length === 0 ? (
             <View style={styles.emptyCard}>
               <Text style={styles.emptyTitle}>Belum Ada Pesanan</Text>
               <Text style={styles.emptyText}>
@@ -353,24 +980,45 @@ export default function App() {
               </Text>
             </View>
           ) : (
-            riwayatPesanan.map((item, index) => (
+            riwayatUser.map((item, index) => (
               <View key={item.id} style={styles.historyCard}>
                 <View style={styles.historyHeader}>
                   <Text style={styles.historyTitle}>
-                    Pesanan #{riwayatPesanan.length - index}
+                    Pesanan #{riwayatUser.length - index}
                   </Text>
-                  <Text style={styles.historyStatus}>{item.status}</Text>
+                  <Text style={[styles.historyStatus, getStatusStyle(item.status)]}>
+                    {item.status}
+                  </Text>
                 </View>
 
                 <Text style={styles.historyText}>Nama: {item.nama}</Text>
                 <Text style={styles.historyText}>Layanan: {item.layanan}</Text>
                 <Text style={styles.historyText}>Jumlah: {item.jumlah}</Text>
+                <Text style={styles.historyText}>File: {item.namaFile || "-"}</Text>
+                {item.fileUrl ? (
+                  <TouchableOpacity
+                    style={styles.fileOpenButton}
+                    onPress={() => Linking.openURL(item.fileUrl)}
+                  >
+                    <Text style={styles.fileOpenButtonText}>Buka File</Text>
+                  </TouchableOpacity>
+                ) : null}
                 <Text style={styles.historyText}>
-                  Tanggal: {item.tanggal || "-"}
+                  Tanggal: {item.tanggal || "-"} • {item.waktu || "-"}
+                </Text>
+                <Text style={styles.historyText}>
+                  Catatan: {item.catatan || "-"}
                 </Text>
                 <Text style={styles.historyTotal}>
                   Total: Rp{item.total.toLocaleString("id-ID")}
                 </Text>
+
+                <TouchableOpacity
+                  style={styles.deleteOneButton}
+                  onPress={() => hapusSatuPesanan(item.id)}
+                >
+                  <Text style={styles.deleteOneText}>Hapus Pesanan Ini</Text>
+                </TouchableOpacity>
               </View>
             ))
           )}
@@ -382,12 +1030,12 @@ export default function App() {
             <Text style={styles.primaryButtonText}>Buat Pesanan Baru</Text>
           </TouchableOpacity>
 
-          {riwayatPesanan.length > 0 && (
+          {riwayatUser.length > 0 && (
             <TouchableOpacity
               style={styles.dangerButton}
-              onPress={hapusRiwayatPesanan}
+              onPress={hapusRiwayatUser}
             >
-              <Text style={styles.dangerButtonText}>Hapus Riwayat</Text>
+              <Text style={styles.dangerButtonText}>Hapus Semua Riwayat</Text>
             </TouchableOpacity>
           )}
 
@@ -406,6 +1054,12 @@ export default function App() {
     <SafeAreaView style={styles.safeArea}>
       <ScrollView contentContainerStyle={styles.container}>
         <Text style={styles.title}>INKFINITY</Text>
+
+        <View style={styles.userBadge}>
+          <Text style={styles.userBadgeText}>
+            Halo, {currentUser?.nama || "User"}
+          </Text>
+        </View>
 
         <View style={styles.circle}>
           <Image
@@ -431,6 +1085,10 @@ export default function App() {
           >
             <Text style={styles.secondaryButtonText}>Riwayat Pemesanan</Text>
           </TouchableOpacity>
+
+          <TouchableOpacity style={styles.dangerButton} onPress={logout}>
+            <Text style={styles.dangerButtonText}>Logout</Text>
+          </TouchableOpacity>
         </View>
 
         <Text style={styles.footer}>Cepat • Mudah • Praktis</Text>
@@ -450,8 +1108,64 @@ const styles = StyleSheet.create({
     backgroundColor: "#f3e3d0",
     alignItems: "center",
     paddingHorizontal: 24,
-    paddingTop: 65,
+    paddingTop: 55,
     paddingBottom: 35,
+  },
+
+  authContainer: {
+    flexGrow: 1,
+    backgroundColor: "#f3e3d0",
+    paddingHorizontal: 24,
+    paddingTop: 55,
+    paddingBottom: 35,
+    justifyContent: "center",
+  },
+
+  authCard: {
+    backgroundColor: "#ead8c3",
+    borderRadius: 22,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: "#d5bfa6",
+  },
+
+  authTitle: {
+    fontFamily: "CrimsonText_700Bold",
+    fontSize: 30,
+    color: "#3B3B3B",
+    textAlign: "center",
+    marginBottom: 6,
+  },
+
+  authSubtitle: {
+    fontFamily: "CrimsonText_400Regular",
+    fontSize: 15,
+    color: "#3B3B3B",
+    textAlign: "center",
+    lineHeight: 21,
+    marginBottom: 20,
+  },
+
+  adminInfoBox: {
+    marginTop: 18,
+    backgroundColor: "#f3e3d0",
+    borderRadius: 15,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "#d5bfa6",
+  },
+
+  adminInfoTitle: {
+    fontFamily: "CrimsonText_700Bold",
+    fontSize: 16,
+    color: "#3B3B3B",
+    marginBottom: 4,
+  },
+
+  adminInfoText: {
+    fontFamily: "CrimsonText_400Regular",
+    fontSize: 15,
+    color: "#3B3B3B",
   },
 
   title: {
@@ -460,7 +1174,23 @@ const styles = StyleSheet.create({
     color: "#3B3B3B",
     textAlign: "center",
     letterSpacing: 1,
-    marginBottom: 22,
+    marginBottom: 18,
+  },
+
+  userBadge: {
+    backgroundColor: "#ead8c3",
+    paddingHorizontal: 15,
+    paddingVertical: 7,
+    borderRadius: 20,
+    marginBottom: 18,
+    borderWidth: 1,
+    borderColor: "#d5bfa6",
+  },
+
+  userBadgeText: {
+    fontFamily: "CrimsonText_700Bold",
+    fontSize: 15,
+    color: "#3B3B3B",
   },
 
   circle: {
@@ -470,7 +1200,7 @@ const styles = StyleSheet.create({
     borderRadius: 110,
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 70,
+    marginBottom: 55,
   },
 
   catImage: {
@@ -485,7 +1215,7 @@ const styles = StyleSheet.create({
     color: "#3B3B3B",
     textAlign: "center",
     lineHeight: 27,
-    marginBottom: 45,
+    marginBottom: 35,
   },
 
   buttonWrapper: {
@@ -515,6 +1245,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     borderWidth: 1.2,
     borderColor: "#3B3B3B",
+    marginTop: 10,
+    marginBottom: 13,
   },
 
   secondaryButtonText: {
@@ -524,7 +1256,7 @@ const styles = StyleSheet.create({
   },
 
   footer: {
-    marginTop: 80,
+    marginTop: 55,
     fontFamily: "CrimsonText_400Regular",
     fontSize: 14,
     color: "#3B3B3B",
@@ -723,6 +1455,67 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
 
+filePickerBox: {
+  backgroundColor: "#f3e3d0",
+  borderWidth: 1,
+  borderColor: "#d5bfa6",
+  borderRadius: 15,
+  padding: 14,
+  marginBottom: 15,
+},
+
+fileInfo: {
+  marginBottom: 12,
+},
+
+fileTitle: {
+  fontFamily: "CrimsonText_700Bold",
+  fontSize: 16,
+  color: "#3B3B3B",
+},
+
+fileSubtitle: {
+  fontFamily: "CrimsonText_400Regular",
+  fontSize: 14,
+  color: "#8a7a68",
+  marginTop: 3,
+},
+
+fileButton: {
+  backgroundColor: "#3B3B3B",
+  paddingVertical: 12,
+  borderRadius: 14,
+  alignItems: "center",
+},
+
+fileButtonText: {
+  fontFamily: "CrimsonText_700Bold",
+  color: "#FFFFFF",
+  fontSize: 15,
+},
+
+  estimateBox: {
+    backgroundColor: "#f3e3d0",
+    borderRadius: 15,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "#d5bfa6",
+    marginBottom: 15,
+  },
+
+  estimateLabel: {
+    fontFamily: "CrimsonText_400Regular",
+    fontSize: 15,
+    color: "#3B3B3B",
+  },
+
+  estimateValue: {
+    fontFamily: "CrimsonText_700Bold",
+    fontSize: 24,
+    color: "#3B3B3B",
+    marginTop: 3,
+  },
+
   submitButton: {
     backgroundColor: "#3B3B3B",
     paddingVertical: 15,
@@ -760,6 +1553,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#d5bfa6",
     paddingVertical: 10,
+    gap: 10,
   },
 
   detailLabel: {
@@ -772,12 +1566,29 @@ const styles = StyleSheet.create({
     fontFamily: "CrimsonText_400Regular",
     fontSize: 16,
     color: "#3B3B3B",
+    textAlign: "right",
+    flex: 1,
   },
 
   statusText: {
     fontFamily: "CrimsonText_700Bold",
     fontSize: 16,
-    color: "#3B3B3B",
+  },
+
+  statusMenunggu: {
+    color: "#92400e",
+  },
+
+  statusProses: {
+    color: "#1d4ed8",
+  },
+
+  statusSelesai: {
+    color: "#15803d",
+  },
+
+  statusBatal: {
+    color: "#b91c1c",
   },
 
   noteBox: {
@@ -829,6 +1640,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     marginBottom: 10,
+    gap: 10,
   },
 
   historyTitle: {
@@ -840,7 +1652,7 @@ const styles = StyleSheet.create({
   historyStatus: {
     fontFamily: "CrimsonText_700Bold",
     fontSize: 14,
-    color: "#3B3B3B",
+    textAlign: "right",
   },
 
   historyText: {
@@ -857,12 +1669,96 @@ const styles = StyleSheet.create({
     marginTop: 5,
   },
 
+  fileOpenButton: {
+    backgroundColor: "#3B3B3B",
+    paddingVertical: 9,
+    borderRadius: 12,
+    alignItems: "center",
+    marginTop: 8,
+    marginBottom: 8,
+  },
+
+  fileOpenButtonText: {
+    fontFamily: "CrimsonText_700Bold",
+    color: "#FFFFFF",
+    fontSize: 14,
+  },
+
+  adminSummary: {
+    backgroundColor: "#ead8c3",
+    borderRadius: 18,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#d5bfa6",
+    marginBottom: 16,
+  },
+
+  adminSummaryText: {
+    fontFamily: "CrimsonText_700Bold",
+    fontSize: 19,
+    color: "#3B3B3B",
+    textAlign: "center",
+  },
+
+  adminButtonRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 14,
+  },
+
+  smallProcessButton: {
+    flex: 1,
+    backgroundColor: "#1d4ed8",
+    paddingVertical: 10,
+    borderRadius: 12,
+    alignItems: "center",
+  },
+
+  smallDoneButton: {
+    flex: 1,
+    backgroundColor: "#15803d",
+    paddingVertical: 10,
+    borderRadius: 12,
+    alignItems: "center",
+  },
+
+  smallCancelButton: {
+    flex: 1,
+    backgroundColor: "#b91c1c",
+    paddingVertical: 10,
+    borderRadius: 12,
+    alignItems: "center",
+  },
+
+  smallButtonText: {
+    fontFamily: "CrimsonText_700Bold",
+    color: "#FFFFFF",
+    fontSize: 13,
+  },
+
+  deleteOneButton: {
+    backgroundColor: "#d5bfa6",
+    borderWidth: 1,
+    borderColor: "#3B3B3B",
+    paddingVertical: 10,
+    borderRadius: 12,
+    alignItems: "center",
+    marginTop: 12,
+  },
+
+  deleteOneText: {
+    fontFamily: "CrimsonText_700Bold",
+    color: "#3B3B3B",
+    fontSize: 14,
+  },
+
   dangerButton: {
     backgroundColor: "#b91c1c",
     paddingVertical: 14,
     borderRadius: 16,
     alignItems: "center",
     marginTop: 2,
+    marginBottom: 13,
     width: "100%",
   },
 
