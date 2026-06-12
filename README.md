@@ -601,3 +601,22 @@ Inkfinity merupakan prototype aplikasi pemesanan layanan fotocopy dan print berb
 Aplikasi ini memungkinkan user melakukan pemesanan melalui HP, mengunggah file dokumen, melihat estimasi harga, serta memantau status pesanan. Admin dapat melihat pesanan melalui laptop, membuka file yang diunggah user, dan mengubah status pesanan secara realtime.
 
 Dengan fitur tersebut, Inkfinity sudah layak digunakan sebagai demo project aplikasi karena tidak hanya menampilkan antarmuka, tetapi juga memiliki alur sistem yang berjalan secara online dari sisi user hingga admin.
+
+## Stack Teknologi Aplikasi
+
+Aplikasi Inkfinity menggunakan **React Native Expo** sebagai teknologi front-end untuk membangun tampilan aplikasi mobile. Bahasa pemrograman yang digunakan adalah **JavaScript**, sedangkan tampilan aplikasi dibuat menggunakan **StyleSheet React Native**.
+
+Pada bagian backend, aplikasi menggunakan **Supabase**. Supabase digunakan sebagai database online, storage file, dan realtime server. Dengan Supabase, data pesanan dapat tersimpan secara online, file dokumen dapat diunggah, dan status pesanan dapat diperbarui secara realtime antara user dan admin.
+
+Secara ringkas, stack teknologi aplikasi Inkfinity adalah:
+
+```text
+Frontend: React Native Expo
+Bahasa Pemrograman: JavaScript
+Styling: StyleSheet React Native
+Backend: Supabase
+Database: Supabase Database
+Storage: Supabase Storage
+Realtime: Supabase Realtime
+Local Storage: AsyncStorage
+```
